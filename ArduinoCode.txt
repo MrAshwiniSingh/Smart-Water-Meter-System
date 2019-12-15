@@ -1,0 +1,236 @@
+#include <ESP8266HTTPClient.h>
+#include <ESP8266WiFi.h> 
+#include <SPI.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#define OLED_SDA   D7  //MOSId7
+#define OLED_SCL   D5  //CLKd5
+#define OLED_DC    D4  //
+#define OLED_CS    12  // no need of connecting, just use some pin number12
+#define OLED_RESET D3  //RESd3
+ int count=0;
+Adafruit_SSD1306 display(OLED_SDA,OLED_SCL, OLED_DC, OLED_RESET, OLED_CS);      // constructor to call OLED display using adafruit library
+int ledPin1 = D6;
+byte sensorInterrupt = D1;  // 0 = digital pin 2
+byte sensorPin       = D2;
+
+float calibrationFactor = 7.5;
+volatile byte pulseCount;  
+
+float flowRate;
+unsigned int flowMilliLitres;
+unsigned long totalMilliLitres;
+unsigned long oldTime;
+
+//Access point credentials
+const char* ssid = "Redmi3";
+const char* pwd = "1234567890";
+int cloud=0,ml;
+WiFiServer server(80);  // open port 80 for server connection
+
+void setup() 
+{
+  Serial.begin(115200); //initialise the serial communication
+  display.begin(SSD1306_SWITCHCAPVCC);   
+  delay(10);
+  pinMode(D6,INPUT); //BUTTON
+  display.clearDisplay();// to clear garbage value
+  pinMode(D8,OUTPUT);//relay button
+digitalWrite(D8,LOW);
+  pulseCount        = 0;
+  flowRate          = 0.0;
+  flowMilliLitres   = 0;
+  totalMilliLitres  = 0;
+  oldTime           = 0;
+
+attachInterrupt(sensorInterrupt, pulseCounter, FALLING);
+ 
+  //connecting to wifi
+  Serial.println();
+  Serial.println();
+  Serial.print("Connecting to wifi ");
+  Serial.println(ssid);
+
+  WiFi.begin(ssid, pwd);
+  
+  //attempt to connect to wifi
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(500);
+    Serial.print("."); //progress with dots until the wifi is connected
+  }
+    Serial.println("");
+
+    //while connected print this
+    Serial.println("Wifi connected");
+
+    //starting the server
+    server.begin();
+    Serial.println("Server started.");
+
+    //get the ip address and print it
+    Serial.print("This is your ip address: ");
+    Serial.print("http://");
+    Serial.print(WiFi.localIP());
+    Serial.println("/");  
+}
+void loop()
+{
+   if((millis() - oldTime) > 1000)    // Only process counters once per second 1000
+  { 
+    detachInterrupt(sensorInterrupt);
+    flowRate = ((1000.0 / (millis() - oldTime)) * pulseCount)
+/calibrationFactor;
+    oldTime = millis();
+    flowMilliLitres = (flowRate / 60) * 1000;
+     // Add the millilitres passed in this second to the cumulative total
+    totalMilliLitres += flowMilliLitres;
+      
+    unsigned int frac;
+    
+    // Print the flow rate for this second in litres / minute
+    Serial.print("Flow rate: ");
+    Serial.print(int(flowRate));  // Print the integer part of the variable
+    Serial.print(".");             // Print the decimal point
+    // Determine the fractional part. The 10 multiplier gives us 1 decimal place.
+    frac = (flowRate - int(flowRate)) * 10;
+    Serial.print(frac, DEC) ;      // Print the fractional part of the variable
+    Serial.print("L/min");
+    // Print the number of litres flowed in this second
+    Serial.print("  Current Liquid Flowing: ");             // Output separator
+    Serial.print(flowMilliLitres);
+    Serial.print("mL/Sec");
+
+    // Print the cumulative total of litres flowed since starting
+    //Serial.print("  Output Liquid Quantity: ");             // Output separator
+    //Serial.print(totalMilliLitres/1000);
+    //Serial.println("mL"); 
+
+    // Reset the pulse counter so we can start incrementing again
+    pulseCount = 0;
+    display.setTextColor(WHITE);
+    display.setTextSize(2);
+    display.setCursor(0,2);
+    display.print("Water Flow = ");
+    display.print(totalMilliLitres);
+    display.print("mL");
+    display.display();
+    //delay(500);
+    display.clearDisplay();
+    // Reset the pulse counter so we can start incrementing again
+    pulseCount = 0;
+ml=totalMilliLitres;
+ // Enable the interrupt again now that we've finished sending output
+   attachInterrupt(sensorInterrupt, pulseCounter, FALLING);
+if(totalMilliLitres>=1000)
+{
+  digitalWrite(D8,HIGH);
+  count=0;
+  }
+count = count +1;
+if(count==50)
+{
+   digitalWrite(D8,LOW);
+   count=0;
+}
+  if(totalMilliLitres<=0)
+    {
+      Serial.println("\ntap is off");
+      
+    } 
+}
+     WiFiClient client = server.available();
+    
+cloud=cloud+1;
+HTTPClient http;
+if(cloud==35)         
+{   cloud=0;
+        HTTPClient http;
+     String url = "http://bokde.000webhostapp.com/waterlink/add.php?flowrate="+String(ml);
+     Serial.println(url);     
+     http.begin(url);
+       
+        //GET method
+        int httpCode = http.GET();
+        if(httpCode > 0)
+        {
+          Serial.printf("[HTTP] GET...code: %d\n", httpCode);
+          if(httpCode == HTTP_CODE_OK)
+          {
+              String payload = http.getString();
+              Serial.println(payload);
+          }
+       }
+       else
+       {
+            Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+       }
+          http.end();
+          delay(500);
+          
+   
+}
+//SMS Code
+  if(digitalRead(D6)==0)
+  {
+    String url = "http://bulksms.mysmsmantra.com:8080/WebSMS/SMSAPI.jsp?username=vsiplngp&password=404764472&sendername=VSIPLN&mobileno=9404084844&message=consumption"+String(ml);
+    Serial.println(url);
+    
+    http.begin(url);
+
+    //GET method
+    int httpcode = http.GET();
+    if(httpcode > 0)
+    {
+        Serial.printf("[HTTP] GET...code: %d\n" , httpcode);
+        if(httpcode == HTTP_CODE_OK)
+        {
+            String payload = http.getString();
+            Serial.println(payload);
+        }
+        else
+        {
+            Serial.printf("[HTTP] GET... failed, error: %s\n" , http.errorToString(httpcode).c_str());
+        }
+            http.end();
+            delay(500);
+    }
+
+ delay(1000);
+  }
+   client.println("");
+      client.println("<!DOCTYPE HTML>");
+      client.println("<html>");
+      client.println("<body style=background-color:skyblue> </body>");
+      client.println("<style> h1 {text-align: center}</style>");
+      client.println("<style> h3 {text-align: center}</style>");
+      client.println("<style> b {text-align: center}</style>");
+      client.println("<style> p {text-align: center}</style>");
+      client.println("<head><style>div.relative{position:relative; left:200px; height:20px; width:350px; border:2px solid #73AD21;}</style></head>");
+ 
+      client.println("<br><br><h1>IoT Water meter</h1><br><br>");
+        client.println("<br>total Used=<br>");
+         client.println("<br>totalMilliLitres<br>");
+       client.print(ml);
+ 
+      // if there are incoming bytes available from the server, read them and print them:
+     if (client.available()) 
+     {
+       char c = client.read();
+       client.print(c);
+     }
+  
+      client.println("</html>");
+      
+      client.println();
+      delay(1);
+      Serial.println("Client disconnected!");
+      Serial.println("");
+      delay(500);
+}
+void pulseCounter()
+{
+  // Increment the pulse counter
+  pulseCount++;
+}
